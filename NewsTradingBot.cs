@@ -5,30 +5,35 @@ using cAlgo.API.Internals;
 
 namespace cAlgo.Robots
 {
-    [Robot(TimeZone = TimeZones.EAfricaStandardTime, AccessRights = AccessRights.None)]
+    [Robot(
+        TimeZone = TimeZones.EAfricaStandardTime,
+        AccessRights = AccessRights.None
+    )]
     public class NewsTradingBot : Robot
     {
-        private const string LabelPrefix = "NewsTradingBot_";
+        private const string BuyLabel = "NewsTradingBot_BUY";
+        private const string SellLabel = "NewsTradingBot_SELL";
 
-        private string BuyLabel => LabelPrefix + "BUY";
-        private string SellLabel => LabelPrefix + "SELL";
+        private Symbol _tradeSymbol;
+        private DateTime _newsTime;
+        private DateTime _placementTime;
 
-        private bool setupPlaced;
-        private bool eventHandled;
-
-        private DateTime targetNewsTime;
-        private DateTime expiryTime;
+        private bool _ordersPlaced;
+        private bool _eventHandled;
 
         [Parameter("Symbol", DefaultValue = "XAUUSD")]
-        public string TradeSymbol { get; set; } = "XAUUSD";
+        public string TradeSymbol { get; set; }
 
         [Parameter("Lot Size", DefaultValue = 0.01, MinValue = 0.01, Step = 0.01)]
         public double LotSize { get; set; }
 
-        [Parameter("News Time", DefaultValue = "2026-09-28 19:00:00")]
-        public DateTime NewsTime { get; set; }
+        [Parameter(
+            "News Time",
+            DefaultValue = "2026-09-28 19:00:00"
+        )]
+        public string NewsTime { get; set; }
 
-        [Parameter("Seconds Before News", DefaultValue = 3, MinValue = 1, MaxValue = 60)]
+        [Parameter("Seconds Before News", DefaultValue = 3, MinValue = 1)]
         public int SecondsBeforeNews { get; set; }
 
         [Parameter("Distance (Pips)", DefaultValue = 500, MinValue = 1)]
@@ -40,364 +45,389 @@ namespace cAlgo.Robots
         [Parameter("Take Profit (USD)", DefaultValue = 20, MinValue = 0)]
         public double TakeProfitUsd { get; set; }
 
-        [Parameter("Pending Expiration (Seconds)", DefaultValue = 60, MinValue = 1, MaxValue = 3600)]
+        [Parameter(
+            "Pending Expiration (Seconds)",
+            DefaultValue = 60,
+            MinValue = 1
+        )]
         public int PendingExpirationSeconds { get; set; }
 
-        [Parameter("Maximum Spread (Pips)", DefaultValue = 0, MinValue = 0)]
+        [Parameter(
+            "Maximum Spread (Pips)",
+            DefaultValue = 0,
+            MinValue = 0
+        )]
         public double MaximumSpreadPips { get; set; }
 
         [Parameter("Debug", DefaultValue = true)]
         public bool Debug { get; set; }
 
-        private Symbol TradeSymbolObject => Symbols.GetSymbol(TradeSymbol);
-
         protected override void OnStart()
         {
-            if (TradeSymbolObject == null)
+            _tradeSymbol = Symbols.GetSymbol(TradeSymbol);
+
+            if (_tradeSymbol == null)
             {
                 Print("ERROR: Symbol '{0}' was not found.", TradeSymbol);
                 Stop();
                 return;
             }
 
-            targetNewsTime = NewsTime;
-            expiryTime = targetNewsTime.AddSeconds(PendingExpirationSeconds);
-
-            if (targetNewsTime <= Server.Time)
+            if (!DateTime.TryParse(NewsTime, out _newsTime))
             {
-                Print("ERROR: News Time must be in the future.");
-                Print("Server time: {0}", Server.Time);
+                Print(
+                    "ERROR: Invalid News Time '{0}'. Use format: yyyy-MM-dd HH:mm:ss",
+                    NewsTime
+                );
+
                 Stop();
                 return;
             }
 
-            Timer.Start(0.1);
+            _placementTime = _newsTime.AddSeconds(-SecondsBeforeNews);
+
+            _ordersPlaced = false;
+            _eventHandled = false;
+
+            Timer.Start(TimeSpan.FromMilliseconds(100));
 
             Print("========================================");
-            Print("NewsTradingBot STARTED");
-            Print("Symbol: {0}", TradeSymbolObject.Name);
-            Print("News Time: {0}", targetNewsTime);
-            Print("Order Placement: {0}",
-                targetNewsTime.AddSeconds(-SecondsBeforeNews));
-            Print("Distance: {0} pips", DistancePips);
-            Print("Lot Size: {0}", LotSize);
-            Print("SL: ${0}", StopLossUsd);
-            Print("TP: ${0}", TakeProfitUsd);
-            Print("Expiration: {0} seconds", PendingExpirationSeconds);
+            Print("News Trading Bot started");
+            Print("Symbol: {0}", _tradeSymbol.Name);
+            Print("News Time: {0}", _newsTime);
+            Print(
+                "Order Placement Time: {0}",
+                _placementTime
+            );
+            Print(
+                "Distance: {0} pips",
+                DistancePips
+            );
+            Print(
+                "Lot Size: {0}",
+                LotSize
+            );
+            Print(
+                "SL: ${0}",
+                StopLossUsd
+            );
+            Print(
+                "TP: ${0}",
+                TakeProfitUsd
+            );
+            Print(
+                "Pending Expiration: {0} seconds",
+                PendingExpirationSeconds
+            );
             Print("========================================");
         }
 
         protected override void OnTimer()
         {
-            if (eventHandled)
+            if (_eventHandled)
                 return;
 
             DateTime now = Server.Time;
 
-            if (!setupPlaced)
+            // Place the pending orders at the requested time.
+            if (!_ordersPlaced && now >= _placementTime)
             {
-                DateTime placementTime =
-                    targetNewsTime.AddSeconds(-SecondsBeforeNews);
-
-                if (now >= placementTime &&
-                    now < targetNewsTime.AddSeconds(1))
-                {
-                    PlaceNewsOrders();
-                    return;
-                }
+                PlaceNewsOrders();
+                return;
             }
 
-            if (setupPlaced &&
-                now >= expiryTime &&
-                !HasOurPosition())
+            // If neither order triggered before expiration,
+            // cancel any remaining pending orders.
+            if (_ordersPlaced &&
+                now >= _newsTime.AddSeconds(PendingExpirationSeconds))
             {
-                CancelOurPendingOrders();
+                CancelAllPendingOrders();
 
-                eventHandled = true;
+                _eventHandled = true;
 
-                Print("Neither pending order triggered.");
-                Print("Both pending orders have been cancelled.");
+                if (Debug)
+                    Print("Pending-order expiration reached.");
             }
         }
 
         protected override void OnTick()
         {
-            if (!setupPlaced)
+            if (!_ordersPlaced || _eventHandled)
                 return;
 
-            var ourPositions = Positions
+            // If one pending order has triggered,
+            // immediately cancel the remaining opposite order.
+            var botPositions = Positions
                 .Where(p =>
-                    p.SymbolName == TradeSymbolObject.Name &&
+                    p.SymbolName == _tradeSymbol.Name &&
                     (p.Label == BuyLabel || p.Label == SellLabel))
                 .ToArray();
 
-            if (ourPositions.Length > 0)
+            if (botPositions.Length > 0)
             {
-                foreach (var order in PendingOrders
-                    .Where(o =>
-                        o.SymbolName == TradeSymbolObject.Name &&
-                        (o.Label == BuyLabel || o.Label == SellLabel))
-                    .ToArray())
-                {
-                    TradeResult result = CancelPendingOrder(order);
+                if (Debug)
+                    Print(
+                        "Bot position detected. Cancelling remaining pending orders."
+                    );
 
-                    if (Debug)
-                    {
-                        Print(
-                            "Opposite pending order {0}: {1}",
-                            order.Id,
-                            result.IsSuccessful
-                                ? "CANCELLED"
-                                : result.Error?.ToString());
-                    }
-                }
+                CancelAllPendingOrders();
 
-                eventHandled = true;
+                _eventHandled = true;
             }
         }
 
         private void PlaceNewsOrders()
         {
-            if (setupPlaced)
+            if (_ordersPlaced || _eventHandled)
                 return;
 
-            Symbol symbol = TradeSymbolObject;
+            if (!_tradeSymbol.MarketHours.IsOpened())
+            {
+                Print(
+                    "Market is closed. News orders were not placed."
+                );
+
+                _eventHandled = true;
+                return;
+            }
 
             double spreadPips =
-                (symbol.Ask - symbol.Bid) / symbol.PipSize;
+                (_tradeSymbol.Ask - _tradeSymbol.Bid) /
+                _tradeSymbol.PipSize;
 
             if (MaximumSpreadPips > 0 &&
                 spreadPips > MaximumSpreadPips)
             {
                 Print(
-                    "Spread is {0:F1} pips, above maximum {1:F1}.",
+                    "Spread too high: {0:F2} pips. Maximum allowed: {1:F2} pips.",
                     spreadPips,
-                    MaximumSpreadPips);
+                    MaximumSpreadPips
+                );
 
-                Print("Orders were NOT placed.");
-
-                eventHandled = true;
+                _eventHandled = true;
                 return;
             }
 
-            double volume =
-                symbol.QuantityToVolumeInUnits(LotSize);
+            double volumeInUnits =
+                _tradeSymbol.QuantityToVolumeInUnits(LotSize);
 
-            volume =
-                symbol.NormalizeVolumeInUnits(
-                    volume,
-                    RoundingMode.Down);
+            volumeInUnits =
+                _tradeSymbol.NormalizeVolumeInUnits(
+                    volumeInUnits,
+                    RoundingMode.Down
+                );
 
-            if (volume < symbol.VolumeInUnitsMin)
+            if (volumeInUnits < _tradeSymbol.VolumeInUnitsMin)
             {
                 Print(
-                    "ERROR: Lot size {0} is below the symbol minimum.",
-                    LotSize);
+                    "ERROR: Requested lot size is below the symbol minimum volume."
+                );
 
-                eventHandled = true;
+                _eventHandled = true;
                 return;
             }
 
-            /*
-             * BUY STOP:
-             * Current Ask + 500 pips
-             *
-             * SELL STOP:
-             * Current Bid - 500 pips
-             */
+            if (volumeInUnits > _tradeSymbol.VolumeInUnitsMax)
+            {
+                Print(
+                    "ERROR: Requested lot size is above the symbol maximum volume."
+                );
 
-            double buyEntry =
-                symbol.Ask +
-                DistancePips * symbol.PipSize;
+                _eventHandled = true;
+                return;
+            }
 
-            double sellEntry =
-                symbol.Bid -
-                DistancePips * symbol.PipSize;
+            // BUY STOP = current Ask + 500 pips
+            double buyStopPrice =
+                _tradeSymbol.Ask +
+                DistancePips * _tradeSymbol.PipSize;
 
-            buyEntry = symbol.NormalizePrice(buyEntry);
-            sellEntry = symbol.NormalizePrice(sellEntry);
+            // SELL STOP = current Bid - 500 pips
+            double sellStopPrice =
+                _tradeSymbol.Bid -
+                DistancePips * _tradeSymbol.PipSize;
 
-            /*
-             * Convert USD SL/TP to pips according
-             * to the actual symbol and lot size.
-             */
+            buyStopPrice = NormalizePrice(buyStopPrice);
+            sellStopPrice = NormalizePrice(sellStopPrice);
 
-            double slPips =
-                MoneyToPips(
-                    StopLossUsd,
-                    volume,
-                    symbol);
+            double stopLossPips =
+                MoneyToPips(StopLossUsd, volumeInUnits);
 
-            double tpPips =
-                MoneyToPips(
-                    TakeProfitUsd,
-                    volume,
-                    symbol);
+            double takeProfitPips =
+                MoneyToPips(TakeProfitUsd, volumeInUnits);
 
             DateTime expiration =
-                targetNewsTime.AddSeconds(
-                    PendingExpirationSeconds);
+                Server.Time.AddSeconds(PendingExpirationSeconds);
 
             if (Debug)
             {
                 Print("========================================");
-                Print("NEWS ORDER SETUP");
-                Print("BID: {0}", symbol.Bid);
-                Print("ASK: {0}", symbol.Ask);
-                Print("Spread: {0:F1} pips", spreadPips);
-
-                Print("BUY STOP: {0}", buyEntry);
-                Print("SELL STOP: {0}", sellEntry);
-
-                Print("SL: {0:F2} pips", slPips);
-                Print("TP: {0:F2} pips", tpPips);
-
+                Print("PLACING NEWS ORDERS");
+                Print("Current Bid: {0}", _tradeSymbol.Bid);
+                Print("Current Ask: {0}", _tradeSymbol.Ask);
+                Print("Spread: {0:F2} pips", spreadPips);
+                Print("BUY STOP: {0}", buyStopPrice);
+                Print("SELL STOP: {0}", sellStopPrice);
+                Print("SL: {0:F2} pips", stopLossPips);
+                Print("TP: {0:F2} pips", takeProfitPips);
                 Print("Expiration: {0}", expiration);
                 Print("========================================");
             }
 
-            TradeResult buyResult =
-                PlaceStopOrder(
-                    TradeType.Buy,
-                    symbol.Name,
-                    volume,
-                    buyEntry,
-                    BuyLabel,
-                    slPips > 0 ? slPips : null,
-                    tpPips > 0 ? tpPips : null,
-                    ProtectionType.Relative,
-                    expiration,
-                    "News straddle BUY",
-                    false,
-                    StopTriggerMethod.Trade,
-                    StopTriggerMethod.Trade);
+            TradeResult buyResult = PlaceStopOrder(
+                TradeType.Buy,
+                _tradeSymbol.Name,
+                volumeInUnits,
+                buyStopPrice,
+                BuyLabel,
+                stopLossPips > 0 ? stopLossPips : (double?)null,
+                takeProfitPips > 0 ? takeProfitPips : (double?)null,
+                ProtectionType.Relative,
+                expiration,
+                "News Buy Stop",
+                false,
+                StopTriggerMethod.Trade
+            );
 
-            TradeResult sellResult =
-                PlaceStopOrder(
-                    TradeType.Sell,
-                    symbol.Name,
-                    volume,
-                    sellEntry,
-                    SellLabel,
-                    slPips > 0 ? slPips : null,
-                    tpPips > 0 ? tpPips : null,
-                    ProtectionType.Relative,
-                    expiration,
-                    "News straddle SELL",
-                    false,
-                    StopTriggerMethod.Trade,
-                    StopTriggerMethod.Trade);
-
-            if (!buyResult.IsSuccessful ||
-                !sellResult.IsSuccessful)
+            if (!buyResult.IsSuccessful)
             {
-                Print("ERROR placing news orders.");
-
                 Print(
-                    "BUY: {0}",
-                    buyResult.IsSuccessful
-                        ? "SUCCESS"
-                        : buyResult.Error?.ToString());
-
-                Print(
-                    "SELL: {0}",
-                    sellResult.IsSuccessful
-                        ? "SUCCESS"
-                        : sellResult.Error?.ToString());
-
-                /*
-                 * If only one side was successfully placed,
-                 * immediately remove it.
-                 */
-
-                if (buyResult.IsSuccessful &&
-                    buyResult.PendingOrder != null)
-                {
-                    CancelPendingOrder(
-                        buyResult.PendingOrder);
-                }
-
-                if (sellResult.IsSuccessful &&
-                    sellResult.PendingOrder != null)
-                {
-                    CancelPendingOrder(
-                        sellResult.PendingOrder);
-                }
-
-                eventHandled = true;
-                return;
+                    "BUY STOP failed: {0}",
+                    buyResult.Error
+                );
+            }
+            else
+            {
+                if (Debug)
+                    Print(
+                        "BUY STOP placed successfully. ID: {0}",
+                        buyResult.PendingOrder.Id
+                    );
             }
 
-            setupPlaced = true;
+            TradeResult sellResult = PlaceStopOrder(
+                TradeType.Sell,
+                _tradeSymbol.Name,
+                volumeInUnits,
+                sellStopPrice,
+                SellLabel,
+                stopLossPips > 0 ? stopLossPips : (double?)null,
+                takeProfitPips > 0 ? takeProfitPips : (double?)null,
+                ProtectionType.Relative,
+                expiration,
+                "News Sell Stop",
+                false,
+                StopTriggerMethod.Trade
+            );
 
-            Print("========================================");
-            Print("SUCCESS");
-            Print("BUY STOP  = {0}", buyEntry);
-            Print("SELL STOP = {0}", sellEntry);
-            Print("Expiration = {0}", expiration);
-            Print("========================================");
+            if (!sellResult.IsSuccessful)
+            {
+                Print(
+                    "SELL STOP failed: {0}",
+                    sellResult.Error
+                );
+            }
+            else
+            {
+                if (Debug)
+                    Print(
+                        "SELL STOP placed successfully. ID: {0}",
+                        sellResult.PendingOrder.Id
+                    );
+            }
+
+            _ordersPlaced = true;
+
+            // If either order failed, cancel the other one.
+            if (!buyResult.IsSuccessful || !sellResult.IsSuccessful)
+            {
+                Print(
+                    "One of the two pending orders failed. Cancelling any remaining order."
+                );
+
+                CancelAllPendingOrders();
+
+                _eventHandled = true;
+            }
         }
 
         private double MoneyToPips(
             double money,
-            double volumeInUnits,
-            Symbol symbol)
+            double volumeInUnits)
         {
             if (money <= 0)
                 return 0;
 
+            if (_tradeSymbol.PipValue <= 0)
+                return 0;
+
             double moneyPerPipForThisVolume =
-                symbol.PipValue *
-                (volumeInUnits / symbol.LotSize);
+                _tradeSymbol.PipValue *
+                (volumeInUnits / _tradeSymbol.LotSize);
 
             if (moneyPerPipForThisVolume <= 0)
                 return 0;
 
-            return money /
-                   moneyPerPipForThisVolume;
+            return money / moneyPerPipForThisVolume;
         }
 
-        private bool HasOurPosition()
+        private double NormalizePrice(double price)
         {
-            return Positions.Any(p =>
-                p.SymbolName == TradeSymbolObject.Name &&
-                (p.Label == BuyLabel ||
-                 p.Label == SellLabel));
+            if (_tradeSymbol.TickSize <= 0)
+                return price;
+
+            double ticks =
+                Math.Round(
+                    price / _tradeSymbol.TickSize,
+                    MidpointRounding.AwayFromZero
+                );
+
+            return ticks * _tradeSymbol.TickSize;
         }
 
-        private void CancelOurPendingOrders()
+        private void CancelAllPendingOrders()
         {
-            foreach (var order in PendingOrders
-                .Where(o =>
-                    o.SymbolName == TradeSymbolObject.Name &&
-                    (o.Label == BuyLabel ||
-                     o.Label == SellLabel))
-                .ToArray())
+            var pendingOrders = PendingOrders
+                .Where(order =>
+                    order.SymbolName == _tradeSymbol.Name &&
+                    (order.Label == BuyLabel ||
+                     order.Label == SellLabel))
+                .ToArray();
+
+            foreach (var order in pendingOrders)
             {
                 TradeResult result =
                     CancelPendingOrder(order);
 
                 if (Debug)
                 {
-                    Print(
-                        "Cancel pending order {0}: {1}",
-                        order.Id,
-                        result.IsSuccessful
-                            ? "SUCCESS"
-                            : result.Error?.ToString());
+                    if (result.IsSuccessful)
+                    {
+                        Print(
+                            "Cancelled pending order ID {0}.",
+                            order.Id
+                        );
+                    }
+                    else
+                    {
+                        Print(
+                            "Failed to cancel pending order ID {0}: {1}",
+                            order.Id,
+                            result.Error
+                        );
+                    }
                 }
             }
         }
 
         protected override void OnStop()
         {
-            CancelOurPendingOrders();
+            CancelAllPendingOrders();
 
             Timer.Stop();
 
-            Print(
-                "NewsTradingBot stopped. " +
-                "All remaining pending orders belonging to this bot were cancelled.");
+            if (Debug)
+                Print("News Trading Bot stopped.");
         }
     }
 }
