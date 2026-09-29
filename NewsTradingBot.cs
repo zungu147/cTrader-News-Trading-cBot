@@ -11,10 +11,14 @@ namespace cAlgo.Robots
     )]
     public class NewsTradingBot : Robot
     {
-        private const string BuyLabel = "NewsTradingBot_BUY";
-        private const string SellLabel = "NewsTradingBot_SELL";
+        private const string BuyLabel1 = "NewsTradingBot_BUY_500";
+        private const string BuyLabel2 = "NewsTradingBot_BUY_1000";
+
+        private const string SellLabel1 = "NewsTradingBot_SELL_500";
+        private const string SellLabel2 = "NewsTradingBot_SELL_1000";
 
         private Symbol _tradeSymbol;
+
         private DateTime _newsTime;
         private DateTime _placementTime;
 
@@ -36,8 +40,11 @@ namespace cAlgo.Robots
         [Parameter("Seconds Before News", DefaultValue = 3, MinValue = 1)]
         public int SecondsBeforeNews { get; set; }
 
-        [Parameter("Distance (Pips)", DefaultValue = 500, MinValue = 1)]
-        public double DistancePips { get; set; }
+        [Parameter("Distance 1 (Pips)", DefaultValue = 500, MinValue = 1)]
+        public double Distance1Pips { get; set; }
+
+        [Parameter("Distance 2 (Pips)", DefaultValue = 1000, MinValue = 1)]
+        public double Distance2Pips { get; set; }
 
         [Parameter("Stop Loss (USD)", DefaultValue = 10, MinValue = 0)]
         public double StopLossUsd { get; set; }
@@ -68,7 +75,11 @@ namespace cAlgo.Robots
 
             if (_tradeSymbol == null)
             {
-                Print("ERROR: Symbol '{0}' was not found.", TradeSymbol);
+                Print(
+                    "ERROR: Symbol '{0}' was not found.",
+                    TradeSymbol
+                );
+
                 Stop();
                 return;
             }
@@ -84,7 +95,8 @@ namespace cAlgo.Robots
                 return;
             }
 
-            _placementTime = _newsTime.AddSeconds(-SecondsBeforeNews);
+            _placementTime =
+                _newsTime.AddSeconds(-SecondsBeforeNews);
 
             _ordersPlaced = false;
             _eventHandled = false;
@@ -100,8 +112,12 @@ namespace cAlgo.Robots
                 _placementTime
             );
             Print(
-                "Distance: {0} pips",
-                DistancePips
+                "Distance 1: {0} pips",
+                Distance1Pips
+            );
+            Print(
+                "Distance 2: {0} pips",
+                Distance2Pips
             );
             Print(
                 "Lot Size: {0}",
@@ -129,15 +145,14 @@ namespace cAlgo.Robots
 
             DateTime now = Server.Time;
 
-            // Place the pending orders at the requested time.
+            // Place the four pending orders at the requested time.
             if (!_ordersPlaced && now >= _placementTime)
             {
                 PlaceNewsOrders();
                 return;
             }
 
-            // If neither order triggered before expiration,
-            // cancel any remaining pending orders.
+            // Cancel remaining pending orders after expiration.
             if (_ordersPlaced &&
                 now >= _newsTime.AddSeconds(PendingExpirationSeconds))
             {
@@ -146,7 +161,9 @@ namespace cAlgo.Robots
                 _eventHandled = true;
 
                 if (Debug)
-                    Print("Pending-order expiration reached.");
+                    Print(
+                        "Pending-order expiration reached."
+                    );
             }
         }
 
@@ -155,24 +172,40 @@ namespace cAlgo.Robots
             if (!_ordersPlaced || _eventHandled)
                 return;
 
-            // If one pending order has triggered,
-            // immediately cancel the remaining opposite order.
-            var botPositions = Positions
-                .Where(p =>
+            bool buyTriggered =
+                Positions.Any(p =>
                     p.SymbolName == _tradeSymbol.Name &&
-                    (p.Label == BuyLabel || p.Label == SellLabel))
-                .ToArray();
+                    (p.Label == BuyLabel1 ||
+                     p.Label == BuyLabel2));
 
-            if (botPositions.Length > 0)
+            bool sellTriggered =
+                Positions.Any(p =>
+                    p.SymbolName == _tradeSymbol.Name &&
+                    (p.Label == SellLabel1 ||
+                     p.Label == SellLabel2));
+
+            // If a BUY executes:
+            // cancel BOTH SELL STOP orders.
+            if (buyTriggered)
             {
                 if (Debug)
                     Print(
-                        "Bot position detected. Cancelling remaining pending orders."
+                        "BUY position detected. Cancelling both SELL STOP orders."
                     );
 
-                CancelAllPendingOrders();
+                CancelSellPendingOrders();
+            }
 
-                _eventHandled = true;
+            // If a SELL executes:
+            // cancel BOTH BUY STOP orders.
+            if (sellTriggered)
+            {
+                if (Debug)
+                    Print(
+                        "SELL position detected. Cancelling both BUY STOP orders."
+                    );
+
+                CancelBuyPendingOrders();
             }
         }
 
@@ -237,112 +270,283 @@ namespace cAlgo.Robots
                 return;
             }
 
-            // BUY STOP = current Ask + 500 pips
-            double buyStopPrice =
+            // -----------------------------------------
+            // BUY STOP PRICES
+            // -----------------------------------------
+
+            double buyStop1Price =
                 _tradeSymbol.Ask +
-                DistancePips * _tradeSymbol.PipSize;
+                Distance1Pips * _tradeSymbol.PipSize;
 
-            // SELL STOP = current Bid - 500 pips
-            double sellStopPrice =
+            double buyStop2Price =
+                _tradeSymbol.Ask +
+                Distance2Pips * _tradeSymbol.PipSize;
+
+            // -----------------------------------------
+            // SELL STOP PRICES
+            // -----------------------------------------
+
+            double sellStop1Price =
                 _tradeSymbol.Bid -
-                DistancePips * _tradeSymbol.PipSize;
+                Distance1Pips * _tradeSymbol.PipSize;
 
-            buyStopPrice = NormalizePrice(buyStopPrice);
-            sellStopPrice = NormalizePrice(sellStopPrice);
+            double sellStop2Price =
+                _tradeSymbol.Bid -
+                Distance2Pips * _tradeSymbol.PipSize;
+
+            buyStop1Price = NormalizePrice(buyStop1Price);
+            buyStop2Price = NormalizePrice(buyStop2Price);
+
+            sellStop1Price = NormalizePrice(sellStop1Price);
+            sellStop2Price = NormalizePrice(sellStop2Price);
 
             double stopLossPips =
-                MoneyToPips(StopLossUsd, volumeInUnits);
+                MoneyToPips(
+                    StopLossUsd,
+                    volumeInUnits
+                );
 
             double takeProfitPips =
-                MoneyToPips(TakeProfitUsd, volumeInUnits);
+                MoneyToPips(
+                    TakeProfitUsd,
+                    volumeInUnits
+                );
 
             DateTime expiration =
-                Server.Time.AddSeconds(PendingExpirationSeconds);
+                Server.Time.AddSeconds(
+                    PendingExpirationSeconds
+                );
 
             if (Debug)
             {
                 Print("========================================");
-                Print("PLACING NEWS ORDERS");
-                Print("Current Bid: {0}", _tradeSymbol.Bid);
-                Print("Current Ask: {0}", _tradeSymbol.Ask);
-                Print("Spread: {0:F2} pips", spreadPips);
-                Print("BUY STOP: {0}", buyStopPrice);
-                Print("SELL STOP: {0}", sellStopPrice);
-                Print("SL: {0:F2} pips", stopLossPips);
-                Print("TP: {0:F2} pips", takeProfitPips);
-                Print("Expiration: {0}", expiration);
+                Print("PLACING FOUR NEWS ORDERS");
+
+                Print(
+                    "Current Bid: {0}",
+                    _tradeSymbol.Bid
+                );
+
+                Print(
+                    "Current Ask: {0}",
+                    _tradeSymbol.Ask
+                );
+
+                Print(
+                    "Spread: {0:F2} pips",
+                    spreadPips
+                );
+
+                Print(
+                    "BUY STOP 1 (+{0} pips): {1}",
+                    Distance1Pips,
+                    buyStop1Price
+                );
+
+                Print(
+                    "BUY STOP 2 (+{0} pips): {1}",
+                    Distance2Pips,
+                    buyStop2Price
+                );
+
+                Print(
+                    "SELL STOP 1 (-{0} pips): {1}",
+                    Distance1Pips,
+                    sellStop1Price
+                );
+
+                Print(
+                    "SELL STOP 2 (-{0} pips): {1}",
+                    Distance2Pips,
+                    sellStop2Price
+                );
+
+                Print(
+                    "SL: {0:F2} pips",
+                    stopLossPips
+                );
+
+                Print(
+                    "TP: {0:F2} pips",
+                    takeProfitPips
+                );
+
+                Print(
+                    "Expiration: {0}",
+                    expiration
+                );
+
                 Print("========================================");
             }
 
-            TradeResult buyResult = PlaceStopOrder(
-                TradeType.Buy,
-                _tradeSymbol.Name,
-                volumeInUnits,
-                buyStopPrice,
-                BuyLabel,
-                stopLossPips > 0 ? stopLossPips : (double?)null,
-                takeProfitPips > 0 ? takeProfitPips : (double?)null,
-                ProtectionType.Relative,
-                expiration,
-                "News Buy Stop",
-                false,
-                StopTriggerMethod.Trade
-            );
+            // =========================================
+            // BUY STOP 1
+            // =========================================
 
-            if (!buyResult.IsSuccessful)
+            TradeResult buy1Result =
+                PlaceStopOrder(
+                    TradeType.Buy,
+                    _tradeSymbol.Name,
+                    volumeInUnits,
+                    buyStop1Price,
+                    BuyLabel1,
+                    stopLossPips > 0
+                        ? stopLossPips
+                        : (double?)null,
+                    takeProfitPips > 0
+                        ? takeProfitPips
+                        : (double?)null,
+                    ProtectionType.Relative,
+                    expiration,
+                    "News Buy Stop 500",
+                    false,
+                    StopTriggerMethod.Trade
+                );
+
+            if (!buy1Result.IsSuccessful)
             {
                 Print(
-                    "BUY STOP failed: {0}",
-                    buyResult.Error
+                    "BUY STOP 1 failed: {0}",
+                    buy1Result.Error
                 );
             }
-            else
-            {
-                if (Debug)
-                    Print(
-                        "BUY STOP placed successfully. ID: {0}",
-                        buyResult.PendingOrder.Id
-                    );
-            }
-
-            TradeResult sellResult = PlaceStopOrder(
-                TradeType.Sell,
-                _tradeSymbol.Name,
-                volumeInUnits,
-                sellStopPrice,
-                SellLabel,
-                stopLossPips > 0 ? stopLossPips : (double?)null,
-                takeProfitPips > 0 ? takeProfitPips : (double?)null,
-                ProtectionType.Relative,
-                expiration,
-                "News Sell Stop",
-                false,
-                StopTriggerMethod.Trade
-            );
-
-            if (!sellResult.IsSuccessful)
+            else if (Debug)
             {
                 Print(
-                    "SELL STOP failed: {0}",
-                    sellResult.Error
+                    "BUY STOP 1 placed successfully. ID: {0}",
+                    buy1Result.PendingOrder.Id
                 );
             }
-            else
+
+            // =========================================
+            // BUY STOP 2
+            // =========================================
+
+            TradeResult buy2Result =
+                PlaceStopOrder(
+                    TradeType.Buy,
+                    _tradeSymbol.Name,
+                    volumeInUnits,
+                    buyStop2Price,
+                    BuyLabel2,
+                    stopLossPips > 0
+                        ? stopLossPips
+                        : (double?)null,
+                    takeProfitPips > 0
+                        ? takeProfitPips
+                        : (double?)null,
+                    ProtectionType.Relative,
+                    expiration,
+                    "News Buy Stop 1000",
+                    false,
+                    StopTriggerMethod.Trade
+                );
+
+            if (!buy2Result.IsSuccessful)
             {
-                if (Debug)
-                    Print(
-                        "SELL STOP placed successfully. ID: {0}",
-                        sellResult.PendingOrder.Id
-                    );
+                Print(
+                    "BUY STOP 2 failed: {0}",
+                    buy2Result.Error
+                );
+            }
+            else if (Debug)
+            {
+                Print(
+                    "BUY STOP 2 placed successfully. ID: {0}",
+                    buy2Result.PendingOrder.Id
+                );
+            }
+
+            // =========================================
+            // SELL STOP 1
+            // =========================================
+
+            TradeResult sell1Result =
+                PlaceStopOrder(
+                    TradeType.Sell,
+                    _tradeSymbol.Name,
+                    volumeInUnits,
+                    sellStop1Price,
+                    SellLabel1,
+                    stopLossPips > 0
+                        ? stopLossPips
+                        : (double?)null,
+                    takeProfitPips > 0
+                        ? takeProfitPips
+                        : (double?)null,
+                    ProtectionType.Relative,
+                    expiration,
+                    "News Sell Stop 500",
+                    false,
+                    StopTriggerMethod.Trade
+                );
+
+            if (!sell1Result.IsSuccessful)
+            {
+                Print(
+                    "SELL STOP 1 failed: {0}",
+                    sell1Result.Error
+                );
+            }
+            else if (Debug)
+            {
+                Print(
+                    "SELL STOP 1 placed successfully. ID: {0}",
+                    sell1Result.PendingOrder.Id
+                );
+            }
+
+            // =========================================
+            // SELL STOP 2
+            // =========================================
+
+            TradeResult sell2Result =
+                PlaceStopOrder(
+                    TradeType.Sell,
+                    _tradeSymbol.Name,
+                    volumeInUnits,
+                    sellStop2Price,
+                    SellLabel2,
+                    stopLossPips > 0
+                        ? stopLossPips
+                        : (double?)null,
+                    takeProfitPips > 0
+                        ? takeProfitPips
+                        : (double?)null,
+                    ProtectionType.Relative,
+                    expiration,
+                    "News Sell Stop 1000",
+                    false,
+                    StopTriggerMethod.Trade
+                );
+
+            if (!sell2Result.IsSuccessful)
+            {
+                Print(
+                    "SELL STOP 2 failed: {0}",
+                    sell2Result.Error
+                );
+            }
+            else if (Debug)
+            {
+                Print(
+                    "SELL STOP 2 placed successfully. ID: {0}",
+                    sell2Result.PendingOrder.Id
+                );
             }
 
             _ordersPlaced = true;
 
-            // If either order failed, cancel the other one.
-            if (!buyResult.IsSuccessful || !sellResult.IsSuccessful)
+            // If any of the four orders failed,
+            // cancel all remaining orders so the setup
+            // is not left incomplete.
+            if (!buy1Result.IsSuccessful ||
+                !buy2Result.IsSuccessful ||
+                !sell1Result.IsSuccessful ||
+                !sell2Result.IsSuccessful)
             {
                 Print(
-                    "One of the two pending orders failed. Cancelling any remaining order."
+                    "One or more pending orders failed. Cancelling all remaining orders."
                 );
 
                 CancelAllPendingOrders();
@@ -385,14 +589,101 @@ namespace cAlgo.Robots
             return ticks * _tradeSymbol.TickSize;
         }
 
+        // =============================================
+        // CANCEL BOTH SELL STOPS
+        // =============================================
+
+        private void CancelSellPendingOrders()
+        {
+            var sellOrders =
+                PendingOrders
+                    .Where(order =>
+                        order.SymbolName == _tradeSymbol.Name &&
+                        (order.Label == SellLabel1 ||
+                         order.Label == SellLabel2))
+                    .ToArray();
+
+            foreach (var order in sellOrders)
+            {
+                TradeResult result =
+                    CancelPendingOrder(order);
+
+                if (Debug)
+                {
+                    if (result.IsSuccessful)
+                    {
+                        Print(
+                            "Cancelled SELL pending order ID {0}.",
+                            order.Id
+                        );
+                    }
+                    else
+                    {
+                        Print(
+                            "Failed to cancel SELL pending order ID {0}: {1}",
+                            order.Id,
+                            result.Error
+                        );
+                    }
+                }
+            }
+        }
+
+        // =============================================
+        // CANCEL BOTH BUY STOPS
+        // =============================================
+
+        private void CancelBuyPendingOrders()
+        {
+            var buyOrders =
+                PendingOrders
+                    .Where(order =>
+                        order.SymbolName == _tradeSymbol.Name &&
+                        (order.Label == BuyLabel1 ||
+                         order.Label == BuyLabel2))
+                    .ToArray();
+
+            foreach (var order in buyOrders)
+            {
+                TradeResult result =
+                    CancelPendingOrder(order);
+
+                if (Debug)
+                {
+                    if (result.IsSuccessful)
+                    {
+                        Print(
+                            "Cancelled BUY pending order ID {0}.",
+                            order.Id
+                        );
+                    }
+                    else
+                    {
+                        Print(
+                            "Failed to cancel BUY pending order ID {0}: {1}",
+                            order.Id,
+                            result.Error
+                        );
+                    }
+                }
+            }
+        }
+
+        // =============================================
+        // CANCEL ALL BOT PENDING ORDERS
+        // =============================================
+
         private void CancelAllPendingOrders()
         {
-            var pendingOrders = PendingOrders
-                .Where(order =>
-                    order.SymbolName == _tradeSymbol.Name &&
-                    (order.Label == BuyLabel ||
-                     order.Label == SellLabel))
-                .ToArray();
+            var pendingOrders =
+                PendingOrders
+                    .Where(order =>
+                        order.SymbolName == _tradeSymbol.Name &&
+                        (order.Label == BuyLabel1 ||
+                         order.Label == BuyLabel2 ||
+                         order.Label == SellLabel1 ||
+                         order.Label == SellLabel2))
+                    .ToArray();
 
             foreach (var order in pendingOrders)
             {
@@ -427,7 +718,9 @@ namespace cAlgo.Robots
             Timer.Stop();
 
             if (Debug)
-                Print("News Trading Bot stopped.");
+                Print(
+                    "News Trading Bot stopped."
+                );
         }
     }
 }
