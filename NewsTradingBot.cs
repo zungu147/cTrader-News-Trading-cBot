@@ -28,8 +28,25 @@ namespace cAlgo.Robots
         [Parameter("Symbol", DefaultValue = "XAUUSD")]
         public string TradeSymbol { get; set; }
 
-        [Parameter("Lot Size", DefaultValue = 0.01, MinValue = 0.01, Step = 0.01)]
-        public double LotSize { get; set; }
+        // =========================================
+        // INDEPENDENT LOT SIZES
+        // =========================================
+
+        [Parameter(
+            "Lot Size 1",
+            DefaultValue = 0.01,
+            MinValue = 0.01,
+            Step = 0.01
+        )]
+        public double LotSize1 { get; set; }
+
+        [Parameter(
+            "Lot Size 2",
+            DefaultValue = 0.01,
+            MinValue = 0.01,
+            Step = 0.01
+        )]
+        public double LotSize2 { get; set; }
 
         [Parameter(
             "News Time",
@@ -37,19 +54,47 @@ namespace cAlgo.Robots
         )]
         public string NewsTime { get; set; }
 
-        [Parameter("Seconds Before News", DefaultValue = 3, MinValue = 1)]
+        [Parameter(
+            "Seconds Before News",
+            DefaultValue = 3,
+            MinValue = 1
+        )]
         public int SecondsBeforeNews { get; set; }
 
-        [Parameter("Distance 1 (Pips)", DefaultValue = 500, MinValue = 1)]
+        // =========================================
+        // INDEPENDENT DISTANCES
+        // =========================================
+
+        [Parameter(
+            "Distance 1 (Pips)",
+            DefaultValue = 500,
+            MinValue = 1
+        )]
         public double Distance1Pips { get; set; }
 
-        [Parameter("Distance 2 (Pips)", DefaultValue = 1000, MinValue = 1)]
+        [Parameter(
+            "Distance 2 (Pips)",
+            DefaultValue = 1000,
+            MinValue = 1
+        )]
         public double Distance2Pips { get; set; }
 
-        [Parameter("Stop Loss (USD)", DefaultValue = 10, MinValue = 0)]
+        // =========================================
+        // SHARED SL / TP
+        // =========================================
+
+        [Parameter(
+            "Stop Loss (USD)",
+            DefaultValue = 10,
+            MinValue = 0
+        )]
         public double StopLossUsd { get; set; }
 
-        [Parameter("Take Profit (USD)", DefaultValue = 20, MinValue = 0)]
+        [Parameter(
+            "Take Profit (USD)",
+            DefaultValue = 20,
+            MinValue = 0
+        )]
         public double TakeProfitUsd { get; set; }
 
         [Parameter(
@@ -66,7 +111,10 @@ namespace cAlgo.Robots
         )]
         public double MaximumSpreadPips { get; set; }
 
-        [Parameter("Debug", DefaultValue = true)]
+        [Parameter(
+            "Debug",
+            DefaultValue = true
+        )]
         public bool Debug { get; set; }
 
         protected override void OnStart()
@@ -84,7 +132,9 @@ namespace cAlgo.Robots
                 return;
             }
 
-            if (!DateTime.TryParse(NewsTime, out _newsTime))
+            if (!DateTime.TryParse(
+                NewsTime,
+                out _newsTime))
             {
                 Print(
                     "ERROR: Invalid News Time '{0}'. Use format: yyyy-MM-dd HH:mm:ss",
@@ -96,45 +146,62 @@ namespace cAlgo.Robots
             }
 
             _placementTime =
-                _newsTime.AddSeconds(-SecondsBeforeNews);
+                _newsTime.AddSeconds(
+                    -SecondsBeforeNews
+                );
 
             _ordersPlaced = false;
             _eventHandled = false;
 
-            Timer.Start(TimeSpan.FromMilliseconds(100));
+            Timer.Start(
+                TimeSpan.FromMilliseconds(100)
+            );
 
             Print("========================================");
             Print("News Trading Bot started");
             Print("Symbol: {0}", _tradeSymbol.Name);
             Print("News Time: {0}", _newsTime);
+
             Print(
                 "Order Placement Time: {0}",
                 _placementTime
             );
+
             Print(
                 "Distance 1: {0} pips",
                 Distance1Pips
             );
+
+            Print(
+                "Lot Size 1: {0}",
+                LotSize1
+            );
+
             Print(
                 "Distance 2: {0} pips",
                 Distance2Pips
             );
+
             Print(
-                "Lot Size: {0}",
-                LotSize
+                "Lot Size 2: {0}",
+                LotSize2
             );
+
             Print(
                 "SL: ${0}",
                 StopLossUsd
             );
+
             Print(
                 "TP: ${0}",
                 TakeProfitUsd
             );
+
             Print(
                 "Pending Expiration: {0} seconds",
                 PendingExpirationSeconds
             );
+
             Print("========================================");
         }
 
@@ -145,65 +212,95 @@ namespace cAlgo.Robots
 
             DateTime now = Server.Time;
 
-            // Place the four pending orders at the requested time.
-            if (!_ordersPlaced && now >= _placementTime)
+            // =========================================
+            // PLACE ORDERS
+            // =========================================
+
+            if (!_ordersPlaced &&
+                now >= _placementTime)
             {
                 PlaceNewsOrders();
+
                 return;
             }
 
-            // Cancel remaining pending orders after expiration.
+            // =========================================
+            // EXPIRATION
+            // =========================================
+
             if (_ordersPlaced &&
-                now >= _newsTime.AddSeconds(PendingExpirationSeconds))
+                now >= _newsTime.AddSeconds(
+                    PendingExpirationSeconds))
             {
                 CancelAllPendingOrders();
 
                 _eventHandled = true;
 
                 if (Debug)
+                {
                     Print(
                         "Pending-order expiration reached."
                     );
+                }
             }
         }
 
         protected override void OnTick()
         {
-            if (!_ordersPlaced || _eventHandled)
+            if (!_ordersPlaced ||
+                _eventHandled)
+            {
                 return;
+            }
 
             bool buyTriggered =
                 Positions.Any(p =>
-                    p.SymbolName == _tradeSymbol.Name &&
-                    (p.Label == BuyLabel1 ||
-                     p.Label == BuyLabel2));
+                    p.SymbolName ==
+                    _tradeSymbol.Name &&
+                    (
+                        p.Label == BuyLabel1 ||
+                        p.Label == BuyLabel2
+                    ));
 
             bool sellTriggered =
                 Positions.Any(p =>
-                    p.SymbolName == _tradeSymbol.Name &&
-                    (p.Label == SellLabel1 ||
-                     p.Label == SellLabel2));
+                    p.SymbolName ==
+                    _tradeSymbol.Name &&
+                    (
+                        p.Label == SellLabel1 ||
+                        p.Label == SellLabel2
+                    ));
 
-            // If a BUY executes:
-            // cancel BOTH SELL STOP orders.
+            // =========================================
+            // BUY TRIGGERED
+            // CANCEL BOTH SELL STOPS
+            // =========================================
+
             if (buyTriggered)
             {
                 if (Debug)
+                {
                     Print(
                         "BUY position detected. Cancelling both SELL STOP orders."
                     );
+                }
 
                 CancelSellPendingOrders();
             }
 
-            // If a SELL executes:
-            // cancel BOTH BUY STOP orders.
+            // =========================================
+            // SELL TRIGGERED
+            // CANCEL BOTH BUY STOPS
+            // =========================================
+
             if (sellTriggered)
             {
                 if (Debug)
+                {
                     Print(
                         "SELL position detected. Cancelling both BUY STOP orders."
                     );
+                }
 
                 CancelBuyPendingOrders();
             }
@@ -211,8 +308,11 @@ namespace cAlgo.Robots
 
         private void PlaceNewsOrders()
         {
-            if (_ordersPlaced || _eventHandled)
+            if (_ordersPlaced ||
+                _eventHandled)
+            {
                 return;
+            }
 
             if (!_tradeSymbol.MarketHours.IsOpened())
             {
@@ -221,11 +321,19 @@ namespace cAlgo.Robots
                 );
 
                 _eventHandled = true;
+
                 return;
             }
 
+            // =========================================
+            // SPREAD
+            // =========================================
+
             double spreadPips =
-                (_tradeSymbol.Ask - _tradeSymbol.Bid) /
+                (
+                    _tradeSymbol.Ask -
+                    _tradeSymbol.Bid
+                ) /
                 _tradeSymbol.PipSize;
 
             if (MaximumSpreadPips > 0 &&
@@ -238,78 +346,182 @@ namespace cAlgo.Robots
                 );
 
                 _eventHandled = true;
+
                 return;
             }
 
-            double volumeInUnits =
-                _tradeSymbol.QuantityToVolumeInUnits(LotSize);
+            // =========================================
+            // VOLUME 1
+            // =========================================
 
-            volumeInUnits =
+            double volume1 =
+                _tradeSymbol.QuantityToVolumeInUnits(
+                    LotSize1
+                );
+
+            volume1 =
                 _tradeSymbol.NormalizeVolumeInUnits(
-                    volumeInUnits,
+                    volume1,
                     RoundingMode.Down
                 );
 
-            if (volumeInUnits < _tradeSymbol.VolumeInUnitsMin)
+            // =========================================
+            // VOLUME 2
+            // =========================================
+
+            double volume2 =
+                _tradeSymbol.QuantityToVolumeInUnits(
+                    LotSize2
+                );
+
+            volume2 =
+                _tradeSymbol.NormalizeVolumeInUnits(
+                    volume2,
+                    RoundingMode.Down
+                );
+
+            // =========================================
+            // CHECK VOLUME 1
+            // =========================================
+
+            if (volume1 <
+                _tradeSymbol.VolumeInUnitsMin)
             {
                 Print(
-                    "ERROR: Requested lot size is below the symbol minimum volume."
+                    "ERROR: Lot Size 1 is below the symbol minimum volume."
                 );
 
                 _eventHandled = true;
+
                 return;
             }
 
-            if (volumeInUnits > _tradeSymbol.VolumeInUnitsMax)
+            if (volume1 >
+                _tradeSymbol.VolumeInUnitsMax)
             {
                 Print(
-                    "ERROR: Requested lot size is above the symbol maximum volume."
+                    "ERROR: Lot Size 1 is above the symbol maximum volume."
                 );
 
                 _eventHandled = true;
+
                 return;
             }
 
-            // -----------------------------------------
-            // BUY STOP PRICES
-            // -----------------------------------------
+            // =========================================
+            // CHECK VOLUME 2
+            // =========================================
+
+            if (volume2 <
+                _tradeSymbol.VolumeInUnitsMin)
+            {
+                Print(
+                    "ERROR: Lot Size 2 is below the symbol minimum volume."
+                );
+
+                _eventHandled = true;
+
+                return;
+            }
+
+            if (volume2 >
+                _tradeSymbol.VolumeInUnitsMax)
+            {
+                Print(
+                    "ERROR: Lot Size 2 is above the symbol maximum volume."
+                );
+
+                _eventHandled = true;
+
+                return;
+            }
+
+            // =========================================
+            // BUY STOP 1
+            // =========================================
 
             double buyStop1Price =
                 _tradeSymbol.Ask +
-                Distance1Pips * _tradeSymbol.PipSize;
+                Distance1Pips *
+                _tradeSymbol.PipSize;
+
+            // =========================================
+            // BUY STOP 2
+            // =========================================
 
             double buyStop2Price =
                 _tradeSymbol.Ask +
-                Distance2Pips * _tradeSymbol.PipSize;
+                Distance2Pips *
+                _tradeSymbol.PipSize;
 
-            // -----------------------------------------
-            // SELL STOP PRICES
-            // -----------------------------------------
+            // =========================================
+            // SELL STOP 1
+            // =========================================
 
             double sellStop1Price =
                 _tradeSymbol.Bid -
-                Distance1Pips * _tradeSymbol.PipSize;
+                Distance1Pips *
+                _tradeSymbol.PipSize;
+
+            // =========================================
+            // SELL STOP 2
+            // =========================================
 
             double sellStop2Price =
                 _tradeSymbol.Bid -
-                Distance2Pips * _tradeSymbol.PipSize;
+                Distance2Pips *
+                _tradeSymbol.PipSize;
 
-            buyStop1Price = NormalizePrice(buyStop1Price);
-            buyStop2Price = NormalizePrice(buyStop2Price);
-
-            sellStop1Price = NormalizePrice(sellStop1Price);
-            sellStop2Price = NormalizePrice(sellStop2Price);
-
-            double stopLossPips =
-                MoneyToPips(
-                    StopLossUsd,
-                    volumeInUnits
+            buyStop1Price =
+                NormalizePrice(
+                    buyStop1Price
                 );
 
-            double takeProfitPips =
+            buyStop2Price =
+                NormalizePrice(
+                    buyStop2Price
+                );
+
+            sellStop1Price =
+                NormalizePrice(
+                    sellStop1Price
+                );
+
+            sellStop2Price =
+                NormalizePrice(
+                    sellStop2Price
+                );
+
+            // =========================================
+            // SL / TP FOR LOT SIZE 1
+            // =========================================
+
+            double stopLossPips1 =
+                MoneyToPips(
+                    StopLossUsd,
+                    volume1
+                );
+
+            double takeProfitPips1 =
                 MoneyToPips(
                     TakeProfitUsd,
-                    volumeInUnits
+                    volume1
+                );
+
+            // =========================================
+            // SL / TP FOR LOT SIZE 2
+            // =========================================
+
+            double stopLossPips2 =
+                MoneyToPips(
+                    StopLossUsd,
+                    volume2
+                );
+
+            double takeProfitPips2 =
+                MoneyToPips(
+                    TakeProfitUsd,
+                    volume2
                 );
 
             DateTime expiration =
@@ -337,39 +549,67 @@ namespace cAlgo.Robots
                     spreadPips
                 );
 
+                Print("----------------------------------------");
+
                 Print(
-                    "BUY STOP 1 (+{0} pips): {1}",
+                    "BUY STOP 1: +{0} pips | Lot: {1} | Price: {2}",
                     Distance1Pips,
+                    LotSize1,
                     buyStop1Price
                 );
 
                 Print(
-                    "BUY STOP 2 (+{0} pips): {1}",
+                    "BUY STOP 1 SL: {0:F2} pips | TP: {1:F2} pips",
+                    stopLossPips1,
+                    takeProfitPips1
+                );
+
+                Print("----------------------------------------");
+
+                Print(
+                    "BUY STOP 2: +{0} pips | Lot: {1} | Price: {2}",
                     Distance2Pips,
+                    LotSize2,
                     buyStop2Price
                 );
 
                 Print(
-                    "SELL STOP 1 (-{0} pips): {1}",
+                    "BUY STOP 2 SL: {0:F2} pips | TP: {1:F2} pips",
+                    stopLossPips2,
+                    takeProfitPips2
+                );
+
+                Print("----------------------------------------");
+
+                Print(
+                    "SELL STOP 1: -{0} pips | Lot: {1} | Price: {2}",
                     Distance1Pips,
+                    LotSize1,
                     sellStop1Price
                 );
 
                 Print(
-                    "SELL STOP 2 (-{0} pips): {1}",
+                    "SELL STOP 1 SL: {0:F2} pips | TP: {1:F2} pips",
+                    stopLossPips1,
+                    takeProfitPips1
+                );
+
+                Print("----------------------------------------");
+
+                Print(
+                    "SELL STOP 2: -{0} pips | Lot: {1} | Price: {2}",
                     Distance2Pips,
+                    LotSize2,
                     sellStop2Price
                 );
 
                 Print(
-                    "SL: {0:F2} pips",
-                    stopLossPips
+                    "SELL STOP 2 SL: {0:F2} pips | TP: {1:F2} pips",
+                    stopLossPips2,
+                    takeProfitPips2
                 );
 
-                Print(
-                    "TP: {0:F2} pips",
-                    takeProfitPips
-                );
+                Print("----------------------------------------");
 
                 Print(
                     "Expiration: {0}",
@@ -387,18 +627,18 @@ namespace cAlgo.Robots
                 PlaceStopOrder(
                     TradeType.Buy,
                     _tradeSymbol.Name,
-                    volumeInUnits,
+                    volume1,
                     buyStop1Price,
                     BuyLabel1,
-                    stopLossPips > 0
-                        ? stopLossPips
+                    stopLossPips1 > 0
+                        ? stopLossPips1
                         : (double?)null,
-                    takeProfitPips > 0
-                        ? takeProfitPips
+                    takeProfitPips1 > 0
+                        ? takeProfitPips1
                         : (double?)null,
                     ProtectionType.Relative,
                     expiration,
-                    "News Buy Stop 500",
+                    "News Buy Stop 1",
                     false,
                     StopTriggerMethod.Trade
                 );
@@ -426,18 +666,18 @@ namespace cAlgo.Robots
                 PlaceStopOrder(
                     TradeType.Buy,
                     _tradeSymbol.Name,
-                    volumeInUnits,
+                    volume2,
                     buyStop2Price,
                     BuyLabel2,
-                    stopLossPips > 0
-                        ? stopLossPips
+                    stopLossPips2 > 0
+                        ? stopLossPips2
                         : (double?)null,
-                    takeProfitPips > 0
-                        ? takeProfitPips
+                    takeProfitPips2 > 0
+                        ? takeProfitPips2
                         : (double?)null,
                     ProtectionType.Relative,
                     expiration,
-                    "News Buy Stop 1000",
+                    "News Buy Stop 2",
                     false,
                     StopTriggerMethod.Trade
                 );
@@ -465,18 +705,18 @@ namespace cAlgo.Robots
                 PlaceStopOrder(
                     TradeType.Sell,
                     _tradeSymbol.Name,
-                    volumeInUnits,
+                    volume1,
                     sellStop1Price,
                     SellLabel1,
-                    stopLossPips > 0
-                        ? stopLossPips
+                    stopLossPips1 > 0
+                        ? stopLossPips1
                         : (double?)null,
-                    takeProfitPips > 0
-                        ? takeProfitPips
+                    takeProfitPips1 > 0
+                        ? takeProfitPips1
                         : (double?)null,
                     ProtectionType.Relative,
                     expiration,
-                    "News Sell Stop 500",
+                    "News Sell Stop 1",
                     false,
                     StopTriggerMethod.Trade
                 );
@@ -504,18 +744,18 @@ namespace cAlgo.Robots
                 PlaceStopOrder(
                     TradeType.Sell,
                     _tradeSymbol.Name,
-                    volumeInUnits,
+                    volume2,
                     sellStop2Price,
                     SellLabel2,
-                    stopLossPips > 0
-                        ? stopLossPips
+                    stopLossPips2 > 0
+                        ? stopLossPips2
                         : (double?)null,
-                    takeProfitPips > 0
-                        ? takeProfitPips
+                    takeProfitPips2 > 0
+                        ? takeProfitPips2
                         : (double?)null,
                     ProtectionType.Relative,
                     expiration,
-                    "News Sell Stop 1000",
+                    "News Sell Stop 2",
                     false,
                     StopTriggerMethod.Trade
                 );
@@ -537,9 +777,11 @@ namespace cAlgo.Robots
 
             _ordersPlaced = true;
 
-            // If any of the four orders failed,
-            // cancel all remaining orders so the setup
-            // is not left incomplete.
+            // =========================================
+            // IF ANY ORDER FAILED
+            // CANCEL EVERYTHING
+            // =========================================
+
             if (!buy1Result.IsSuccessful ||
                 !buy2Result.IsSuccessful ||
                 !sell1Result.IsSuccessful ||
@@ -555,6 +797,11 @@ namespace cAlgo.Robots
             }
         }
 
+        // =============================================
+        // CONVERT USD TO PIPS
+        // USING THE SPECIFIC LOT SIZE
+        // =============================================
+
         private double MoneyToPips(
             double money,
             double volumeInUnits)
@@ -567,26 +814,37 @@ namespace cAlgo.Robots
 
             double moneyPerPipForThisVolume =
                 _tradeSymbol.PipValue *
-                (volumeInUnits / _tradeSymbol.LotSize);
+                (
+                    volumeInUnits /
+                    _tradeSymbol.LotSize
+                );
 
             if (moneyPerPipForThisVolume <= 0)
                 return 0;
 
-            return money / moneyPerPipForThisVolume;
+            return money /
+                   moneyPerPipForThisVolume;
         }
 
-        private double NormalizePrice(double price)
+        // =============================================
+        // NORMALIZE PRICE
+        // =============================================
+
+        private double NormalizePrice(
+            double price)
         {
             if (_tradeSymbol.TickSize <= 0)
                 return price;
 
             double ticks =
                 Math.Round(
-                    price / _tradeSymbol.TickSize,
+                    price /
+                    _tradeSymbol.TickSize,
                     MidpointRounding.AwayFromZero
                 );
 
-            return ticks * _tradeSymbol.TickSize;
+            return ticks *
+                   _tradeSymbol.TickSize;
         }
 
         // =============================================
@@ -598,15 +856,22 @@ namespace cAlgo.Robots
             var sellOrders =
                 PendingOrders
                     .Where(order =>
-                        order.SymbolName == _tradeSymbol.Name &&
-                        (order.Label == SellLabel1 ||
-                         order.Label == SellLabel2))
+                        order.SymbolName ==
+                        _tradeSymbol.Name &&
+                        (
+                            order.Label ==
+                            SellLabel1 ||
+                            order.Label ==
+                            SellLabel2
+                        ))
                     .ToArray();
 
             foreach (var order in sellOrders)
             {
                 TradeResult result =
-                    CancelPendingOrder(order);
+                    CancelPendingOrder(
+                        order
+                    );
 
                 if (Debug)
                 {
@@ -638,15 +903,22 @@ namespace cAlgo.Robots
             var buyOrders =
                 PendingOrders
                     .Where(order =>
-                        order.SymbolName == _tradeSymbol.Name &&
-                        (order.Label == BuyLabel1 ||
-                         order.Label == BuyLabel2))
+                        order.SymbolName ==
+                        _tradeSymbol.Name &&
+                        (
+                            order.Label ==
+                            BuyLabel1 ||
+                            order.Label ==
+                            BuyLabel2
+                        ))
                     .ToArray();
 
             foreach (var order in buyOrders)
             {
                 TradeResult result =
-                    CancelPendingOrder(order);
+                    CancelPendingOrder(
+                        order
+                    );
 
                 if (Debug)
                 {
@@ -678,17 +950,26 @@ namespace cAlgo.Robots
             var pendingOrders =
                 PendingOrders
                     .Where(order =>
-                        order.SymbolName == _tradeSymbol.Name &&
-                        (order.Label == BuyLabel1 ||
-                         order.Label == BuyLabel2 ||
-                         order.Label == SellLabel1 ||
-                         order.Label == SellLabel2))
+                        order.SymbolName ==
+                        _tradeSymbol.Name &&
+                        (
+                            order.Label ==
+                            BuyLabel1 ||
+                            order.Label ==
+                            BuyLabel2 ||
+                            order.Label ==
+                            SellLabel1 ||
+                            order.Label ==
+                            SellLabel2
+                        ))
                     .ToArray();
 
             foreach (var order in pendingOrders)
             {
                 TradeResult result =
-                    CancelPendingOrder(order);
+                    CancelPendingOrder(
+                        order
+                    );
 
                 if (Debug)
                 {
@@ -718,9 +999,11 @@ namespace cAlgo.Robots
             Timer.Stop();
 
             if (Debug)
+            {
                 Print(
                     "News Trading Bot stopped."
                 );
+            }
         }
     }
 }
